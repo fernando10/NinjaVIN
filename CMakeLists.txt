@@ -7,6 +7,13 @@ if(NOT DEFINED CMAKE_MACOSX_RPATH)
   set(CMAKE_MACOSX_RPATH 0)
 endif()
 
+list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake_modules/")
+
+string(TOLOWER ${PROJECT_NAME} LIBRARY_NAME)
+
+include(install_package)
+include(SetPlatformVars)
+
 
 set( CMAKE_CXX_FLAGS "-std=c++0x -Wall ${CMAKE_CXX_FLAGS}" )
 if(${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
@@ -22,40 +29,71 @@ if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
   message(FATAL_ERROR "In-source builds not allowed. Please make a new directory (called a build directory) and run CMake from there. You may need to remove CMakeCache.txt. ")
 endif()
 
-# require OpenCV
-find_package( OpenCV COMPONENTS core highgui imgproc features2d REQUIRED )
-include_directories(BEFORE ${OpenCV_INCLUDE_DIRS})
-
-# require okvis
-find_package( okvis 1.1 REQUIRED)
-include_directories(${OKVIS_INCLUDE_DIRS})
-
-# require brisk
-find_package( brisk 2 REQUIRED)
-include_directories(${BRISK_INCLUDE_DIRS})
-
-# require ceres
-list(APPEND CMAKE_PREFIX_PATH ${OKVIS_INSTALLATION})
-find_package( Ceres REQUIRED )
-include_directories(${CERES_INCLUDE_DIRS})
-
-# require OpenGV
-find_package(opengv REQUIRED)
-
-# require HAL
+#####################################################################
+## Find required packages
+enable_testing()
+find_package(Eigen3 REQUIRED)
+find_package(GLog REQUIRED)
+find_package(sdtrack REQUIRED)
+find_package(BA REQUIRED)
 find_package(HAL REQUIRED)
-include_directories(${HAL_INCLUDE_DIRS})
+find_package(Sophus REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package( OpenCV REQUIRED core calib3d )
 
-set(HRDS_LIST
-    InterpolationBuffer.h)
 
-aux_source_directory(. SRC_LIST)
-add_executable(${PROJECT_NAME} ${SRC_LIST} ${HDRS_LIST})
+set( REQUIRED_INCLUDE_DIRS
+    ${GLOG_INCLUDE_DIRS}
+    ${EIGEN_INCLUDE_DIRS}
+    ${Sophus_INCLUDE_DIRS}
+    ${sdtrack_INCLUDE_DIRS}
+    ${HAL_INCLUDE_DIRS}
+    ${BA_INCLUDE_DIRS}
+   )
 
-target_link_libraries( ${PROJECT_NAME}
-  ${OpenCV_LIBRARIES}
-  ${HAL_LIBRARIES}
-  ${OKVIS_LIBRARIES}
-  ${BRISK_LIBRARIES}
-  ${CERES_LIBRARIES}
-  )
+set( REQUIRED_LIBRARIES
+    ${GLOG_LIBRARIES}
+    ${Sophus_LIBRARIES}
+    ${HAL_LIBRARIES}
+    ${PROTOBUF_LIBRARIES}
+    ${BA_LIBRARIES}
+    ${sdtrack_LIBRARIES}
+    )
+
+set( INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/ )
+
+set( HEADERS
+    ${INC_DIR}/VINSystem.hpp
+    ${INC_DIR}/common/chi2inv.h
+    ${INC_DIR}/common/etc_common.h
+    ${INC_DIR}/common/math_types.h
+    ${INC_DIR}/common/timer.h
+    )
+
+
+set( SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src )
+
+set( SOURCES
+    ${SRC_DIR}/VINSystem.cpp
+    )
+
+
+include_directories( ${REQUIRED_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/include )
+add_library( ${LIBRARY_NAME} SHARED ${SOURCES} ${HEADERS} )
+target_link_libraries( ${LIBRARY_NAME} ${REQUIRED_LIBRARIES} )
+set_target_properties( ${LIBRARY_NAME} PROPERTIES VERSION "${PACKAGE_VERSION}" SOVERSION "${PACKAGE_VERSION}" )
+
+install_package(
+    PKG_NAME ${PROJECT_NAME}
+    LIB_NAME ${LIBRARY_NAME}
+    VERSION ${PACKAGE_VERSION}
+    DESCRIPTION "ARPG SLAM Library (sdtrack)"
+    INSTALL_INCLUDE_DIR true
+    DESTINATION ${CMAKE_INSTALL_PREFIX}
+    INCLUDE_DIRS ${REQUIRED_INCLUDE_DIRS}
+    LINK_LIBS ${REQUIRED_LIBRARIES}
+    )
+
+
+add_custom_target(uninstall
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
