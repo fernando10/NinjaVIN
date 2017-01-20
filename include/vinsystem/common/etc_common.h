@@ -37,7 +37,7 @@ bool LoadCameraAndRig(std::string cam_string, std::string cmod,
 
   LOG(INFO) << "Loading camera models...";
   std::string filename = def_dir + "/" + cmod;
-  LOG(INFO) << "Loading camera models from " << cmod;
+  LOG(INFO) << "Loading camera models from " << filename;
 
   std::shared_ptr<calibu::Rig<Scalar>> xmlrig = calibu::ReadXmlRig(filename);
   if (xmlrig->cameras_.empty()) {
@@ -58,19 +58,19 @@ bool LoadCameraAndRig(std::string cam_string, std::string cmod,
 
   }
 
-  //LOG(INFO) << "Starting Tvs: " << crig->cameras_[0]->Pose().matrix();
+  LOG(INFO) << "Starting Tvs: " << crig->cameras_[0]->Pose().matrix();
 
   rig.cameras_.clear();
   for (uint32_t cam_id = 0; cam_id < crig->cameras_.size(); ++cam_id) {
     rig.AddCamera(crig->cameras_[cam_id]);
   }
 
-//  for (size_t ii = 0; ii < rig.cameras_.size(); ++ii) {
-//    LOG(INFO) << ">>>>>>>> Camera " << ii << ":" << std::endl
-//              << "Model: " << std::endl << rig.cameras_[ii]->K()
-//              << std::endl << "Pose: " << std::endl
-//              << rig.cameras_[ii]->Pose().matrix();
-//  }
+  for (size_t ii = 0; ii < rig.cameras_.size(); ++ii) {
+    LOG(INFO) << ">>>>>>>> Camera " << ii << ":" << std::endl
+              << "Model: " << std::endl << rig.cameras_[ii]->K()
+              << std::endl << "Pose: " << std::endl
+              << rig.cameras_[ii]->Pose().matrix();
+  }
   return true;
 }
 

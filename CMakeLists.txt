@@ -67,10 +67,10 @@ set( INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/${LIBRARY_NAME} )
 
 set( HEADERS
     ${INC_DIR}/VINSystem.hpp
-    ${INC_DIR}/common/chi2inv.h
-    ${INC_DIR}/common/etc_common.h
-    ${INC_DIR}/common/math_types.h
-    ${INC_DIR}/common/timer.h
+#    ${INC_DIR}/common/chi2inv.h
+#    ${INC_DIR}/common/etc_common.h
+#    ${INC_DIR}/common/math_types.h
+#    ${INC_DIR}/common/timer.h
     )
 
 

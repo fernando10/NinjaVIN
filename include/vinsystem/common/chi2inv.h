@@ -1,4 +1,4 @@
-
+#pragma once
 
 double  normalCDF(double u)
 {
@@ -145,3 +145,4 @@ double chi2inv(double P, unsigned int dim)
   else return dim * pow(1.0 - 2.0 / (9 * dim) +
                         sqrt(2.0 / (9 * dim))*normalQuantile(P), 3);
 }
+

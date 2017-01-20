@@ -90,38 +90,7 @@ public:
      * @brief VINSystem Constructor from settings file
      * @param settings_file_str filesystem path to the .yaml settings file
      */
-    VINSystem(const std::string &settings_file_str)
-    {
-        // Read in settings file
-        cv::FileStorage fsSettings(settings_file_str.c_str(), cv::FileStorage::READ);
-        if(!fsSettings.isOpened())
-        {
-            LOG(FATAL) << "Failed to open settings file at: "
-                       << settings_file_str;
-        }
-
-        // Get sensor URI strings
-        cam_uri_str_ = static_cast<std::string>(fsSettings["Camera.uri"]);
-        cmod_str_ = static_cast<std::string>(fsSettings["Camera.config"]);
-        imu_uri_str_ = static_cast<std::string>(fsSettings["IMU.uri"]);
-
-        use_system_time =
-                static_cast<int>(fsSettings["Devices.use_system_time"]) != 0;
-
-        sys_options_.patch_size = fsSettings["Tracker.patch_size"];
-        sys_options_.num_features = fsSettings["Tracker.num_features"];
-
-        // Load camera and IMU
-        LoadDevices();
-
-        // Register this instance to receive the sensor messages from HAL.
-        VINSystem::callback_devices.push_back(this);
-
-        InitTracker();
-
-        StartThreads();
-
-    }
+    VINSystem(const std::string &settings_file_str);
 
     /**
      * @brief GetSystemOptions
@@ -131,17 +100,12 @@ public:
 
     /**
      * @brief GetLatestPose
-     * @return latest possible pose, will be propagated to the latest imu
-     *         measurement.
+     * @param out_pose [out] lastest pose
+     * @param integrate_imu [in] wether to use imu measurements to propagate the
+     * latest optimized pose to the most current time.
+     * @return
      */
-    void GetLatestPose(sdtrack::TrackerPose *out_pose);
-
-    /**
-     * @brief GetLatestOptimizedPose
-     * @return latest pose that was optimized (bundle adjustment).
-     */
-    void GetLatestOptimizedPose(sdtrack::TrackerPose *out_pose);
-
+    bool GetLatestPose(sdtrack::TrackerPose *out_pose, bool integrate_imu=true);
 
     /**
      * @brief Shutdown Kills the tracking thread and exits cleanly.
@@ -173,35 +137,7 @@ private:
     void ProcessImuMessage(const hal::ImuMsg& ref);
 
 
-    bool LoadDevices()
-    {
-        LoadCameraAndRig(cam_uri_str_, cmod_str_, camera_device, rig);
-
-        // Load the imu
-        if (!imu_uri_str_.empty()) {
-            try {
-                imu_device = hal::IMU(imu_uri_str_);
-            } catch (hal::DeviceException& e) {
-                LOG(ERROR) << "Error loading imu device: " << e.what()
-                           << " ... proceeding without.";
-            }
-            imu_device.RegisterIMUDataCallback(&VINSystem::ImuCallback);
-        }
-        // Capture an image so we have some IMU data.
-        std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
-        while (imu_buffer.elements.size() == 0) {
-            camera_device.Capture(*images);
-        }
-
-        if (!use_system_time) {
-            sys_options_.imu_time_offset = imu_buffer.elements.back().time -
-                    images->Ref().device_time();
-            std::cerr << "Setting initial time offset to " << sys_options_.imu_time_offset <<
-                         std:: endl;
-        }
-
-        return true;
-    }
+    bool LoadDevices();
 
     void ProcessImage(std::vector<cv::Mat>& images, double timestamp);
 
@@ -243,7 +179,7 @@ private:
 
     std::mutex latest_pose_mutex_;
 
-
+    std::shared_ptr<sdtrack::TrackerPose> latest_pose_;
 
     calibu::Rig<Scalar> old_rig;
     calibu::Rig<Scalar> rig;
@@ -253,7 +189,6 @@ private:
     sdtrack::SemiDenseTracker tracker;
 
     std::list<std::shared_ptr<sdtrack::DenseTrack>>* current_tracks = nullptr;
-    std::shared_ptr<hal::Image> camera_img;
     std::vector<std::shared_ptr<sdtrack::TrackerPose>> poses;
 
     // Gps structures

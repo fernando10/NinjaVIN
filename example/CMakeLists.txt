@@ -1,7 +1,26 @@
 find_package(VINSystem REQUIRED)
 
-include_directories(
+set( REQUIRED_LIBRARIES
+    ${VINSystem_LIBRARIES}
+    )
+
+set( REQUIRED_INCLUDE_DIRS
     ${VINSystem_INCLUDE_DIRS}
+    )
+
+#####################################################################
+## Find optional packages
+find_package(SLAMViewer QUIET)
+
+if(SLAMViewer_FOUND)
+  add_definitions(-DHAVE_SLAMViewer)
+  list(APPEND REQUIRED_LIBRARIES ${SLAMViewer_LIBRARIES})
+  list(APPEND REQUIRED_INCLUDE_DIRS ${SLAMViewer_INCLUDE_DIRS})
+endif()
+#####################################################################
+
+include_directories(
+    ${REQUIRED_INCLUDE_DIRS}
     )
 
 set(SRCS
@@ -11,5 +30,5 @@ set(SRCS
 add_executable(example_vin ${SRCS})
 
 target_link_libraries( example_vin
-  ${VINSystem_LIBRARIES}
+  ${REQUIRED_LIBRARIES}
   )

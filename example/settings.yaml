@@ -4,25 +4,41 @@
 # Camera Parameters.
 #--------------------------------------------------------------------------------------------
 
-Camera.uri: log:///Users/feno/Projects/DATA/NinjaCar/FishEye/lab_run.log
-Camera.config: cameras_imu.xml
+#NinjaCar Lab Run
+#Camera.uri: "log:[realtime=0]///Users/feno/Projects/DATA/NinjaCar/FishEye/lab_run.log"
+#Camera.config: "cameras_imu.xml"
+
+#Peanut CU Lobby
+Camera.uri: "trailmix://files:///Users/feno/DATA/Peanut/CU_Lobby/superframes/*.pgm"
+Camera.config: "cameras.xml"
 
 #--------------------------------------------------------------------------------------------
 # IMU Parameters.
 #--------------------------------------------------------------------------------------------
 
-IMU.uri: log:///Users/feno/Projects/DATA/NinjaCar/FishEye/lab_run.log
+#NinjaCar Lab Run
+#IMU.uri: "log:///Users/feno/Projects/DATA/NinjaCar/FishEye/lab_run.log"
+
+#Peanut CU Lobby
+IMU.uri: "join://trailmix://files://"
 
 #--------------------------------------------------------------------------------------------
 # System Parameters.
 #--------------------------------------------------------------------------------------------
-Devices.use_system_time: false
+Devices.use_system_time: 0
 
 #--------------------------------------------------------------------------------------------
 # Tracker Parameters.
 #--------------------------------------------------------------------------------------------
 Tracker.patch_size: 9
 Tracker.num_features: 128
+
+#--------------------------------------------------------------------------------------------
+# Debug Parameters.
+#--------------------------------------------------------------------------------------------
+Debug.verbose_level: 1
+Debug.log_threshold: 0
+
 
 
 
