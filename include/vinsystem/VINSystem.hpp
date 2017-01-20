@@ -43,7 +43,7 @@ struct SystemOptions
     SystemOptions(){}
     double gyro_sigma = 1.3088444e-1;
     double gyro_bias_sigma =
-       IMU_GYRO_BIAS_SIGMA;
+            IMU_GYRO_BIAS_SIGMA;
     double accel_sigma = IMU_ACCEL_SIGMA;
     double accel_bias_sigma = IMU_ACCEL_BIAS_SIGMA;
     int pyramid_levels = 4;
@@ -76,7 +76,7 @@ struct SystemOptions
     double tracker_center_weight = 100.0;
     double ncc_threshold =  0.875;
     Eigen::Vector3d gravity_vector = (Eigen::Vector3d)(Eigen::Vector3d(0, 0, -1) *
-                                                  ba::Gravity);
+                                                       ba::Gravity);
 
 
 };
@@ -90,7 +90,38 @@ public:
      * @brief VINSystem Constructor from settings file
      * @param settings_file_str filesystem path to the .yaml settings file
      */
-    VINSystem(const std::string& settings_file_str);
+    VINSystem(const std::string &settings_file_str)
+    {
+        // Read in settings file
+        cv::FileStorage fsSettings(settings_file_str.c_str(), cv::FileStorage::READ);
+        if(!fsSettings.isOpened())
+        {
+            LOG(FATAL) << "Failed to open settings file at: "
+                       << settings_file_str;
+        }
+
+        // Get sensor URI strings
+        cam_uri_str_ = static_cast<std::string>(fsSettings["Camera.uri"]);
+        cmod_str_ = static_cast<std::string>(fsSettings["Camera.config"]);
+        imu_uri_str_ = static_cast<std::string>(fsSettings["IMU.uri"]);
+
+        use_system_time =
+                static_cast<int>(fsSettings["Devices.use_system_time"]) != 0;
+
+        sys_options_.patch_size = fsSettings["Tracker.patch_size"];
+        sys_options_.num_features = fsSettings["Tracker.num_features"];
+
+        // Load camera and IMU
+        LoadDevices();
+
+        // Register this instance to receive the sensor messages from HAL.
+        VINSystem::callback_devices.push_back(this);
+
+        InitTracker();
+
+        StartThreads();
+
+    }
 
     /**
      * @brief GetSystemOptions
@@ -103,13 +134,13 @@ public:
      * @return latest possible pose, will be propagated to the latest imu
      *         measurement.
      */
-    sdtrack::TrackerPose& GetLatestPose();
+    void GetLatestPose(sdtrack::TrackerPose *out_pose);
 
     /**
      * @brief GetLatestOptimizedPose
      * @return latest pose that was optimized (bundle adjustment).
      */
-    sdtrack::TrackerPose& GetLatestOptimizedPose();
+    void GetLatestOptimizedPose(sdtrack::TrackerPose *out_pose);
 
 
     /**
@@ -117,17 +148,11 @@ public:
      */
     void Shutdown();
 
-    /**
-     * @brief ImuCallback Static callback for receiving data
-     * @param ref
-     */
-    static void ImuCallback(const hal::ImuMsg &ref);
-    static std::vector<VINSystem*> callback_devices;
-
-    void ProcessImuMessage(const hal::ImuMsg& ref);
-
 
 private:
+
+    void StartThreads();
+
     void UpdateCurrentPose();
 
     void InitTracker();
@@ -140,7 +165,43 @@ private:
 
     void BaAndStartNewLandmarks();
 
-    bool LoadDevices();
+    /**
+     * @brief ImuCallback Static callback for receiving data
+     * @param ref
+     */
+    static void ImuCallback(const hal::ImuMsg &ref);
+    void ProcessImuMessage(const hal::ImuMsg& ref);
+
+
+    bool LoadDevices()
+    {
+        LoadCameraAndRig(cam_uri_str_, cmod_str_, camera_device, rig);
+
+        // Load the imu
+        if (!imu_uri_str_.empty()) {
+            try {
+                imu_device = hal::IMU(imu_uri_str_);
+            } catch (hal::DeviceException& e) {
+                LOG(ERROR) << "Error loading imu device: " << e.what()
+                           << " ... proceeding without.";
+            }
+            imu_device.RegisterIMUDataCallback(&VINSystem::ImuCallback);
+        }
+        // Capture an image so we have some IMU data.
+        std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
+        while (imu_buffer.elements.size() == 0) {
+            camera_device.Capture(*images);
+        }
+
+        if (!use_system_time) {
+            sys_options_.imu_time_offset = imu_buffer.elements.back().time -
+                    images->Ref().device_time();
+            std::cerr << "Setting initial time offset to " << sys_options_.imu_time_offset <<
+                         std:: endl;
+        }
+
+        return true;
+    }
 
     void ProcessImage(std::vector<cv::Mat>& images, double timestamp);
 
@@ -158,6 +219,8 @@ private:
 
 private:
     SystemOptions sys_options_;
+
+    static std::vector<VINSystem*> callback_devices;
 
     // sd_track variables
     uint32_t keyframe_tracks = UINT_MAX;

@@ -1,4 +1,4 @@
-project(NinjaVIN)
+project(VINSystem)
 cmake_minimum_required(VERSION 2.8)
 
 
@@ -28,6 +28,9 @@ endif()
 if(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
   message(FATAL_ERROR "In-source builds not allowed. Please make a new directory (called a build directory) and run CMake from there. You may need to remove CMakeCache.txt. ")
 endif()
+
+option(BUILD_EXAMPLE "Build Example" ON)
+
 
 #####################################################################
 ## Find required packages
@@ -60,7 +63,7 @@ set( REQUIRED_LIBRARIES
     ${sdtrack_LIBRARIES}
     )
 
-set( INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/ )
+set( INC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/${LIBRARY_NAME} )
 
 set( HEADERS
     ${INC_DIR}/VINSystem.hpp
@@ -97,3 +100,9 @@ install_package(
 
 add_custom_target(uninstall
     COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
+
+# Build application
+if(BUILD_EXAMPLE)
+  set( Compass_DIR ${CMAKE_CURRENT_BINARY_DIR} )
+  add_subdirectory(example)
+endif()

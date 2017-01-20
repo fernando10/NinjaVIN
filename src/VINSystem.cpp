@@ -1,23 +1,14 @@
 
-
-#include "VINSystem.hpp"
+#include <vinsystem/VINSystem.hpp>
+#include <vinsystem/SystemDevices.hpp>
 
 #define POSES_TO_INIT 10
 
 namespace compass
 {
-
-
-void VINSystem::ProcessImuMessage(const hal::ImuMsg& ref) {
-    const double timestamp = use_system_time ? ref.system_time() :
-                                               ref.device_time();
-    Eigen::VectorXd a, w;
-    hal::ReadVector(ref.accel(), &a);
-    hal::ReadVector(ref.gyro(), &w);
-    // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
-    //             w.transpose() << " at time " << timestamp << std::endl;
-    imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
-}
+// initialization of static variable
+std::vector<VINSystem*> VINSystem::callback_devices =
+    std::vector<VINSystem*>();
 
 template <typename BaType>
 void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
@@ -204,8 +195,12 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
 
             uint32_t last_pose_id =
                     is_keyframe ? poses.size() - 1 : poses.size() - 2;
-            std::shared_ptr<sdtrack::TrackerPose> last_pose = is_keyframe ?
-                        poses.back() : poses[poses.size() - 2];
+            std::shared_ptr<sdtrack::TrackerPose> last_pose;
+            {
+                std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+                last_pose = is_keyframe ?
+                                        poses.back() : poses[poses.size() - 2];
+            }
 
             if (last_pose_id <= end_pose_id) {
                 // Get the pose of the last pose. This is used to calculate the relative
@@ -350,43 +345,6 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
     }
 }
 
-void VINSystem::ImuCallback(const hal::ImuMsg& ref)
-{
-
-  for (VINSystem* device : VINSystem::callback_devices){
-    device->ProcessImuMessage(ref);
-  }
-}
-
-bool VINSystem::LoadDevices()
-{
-    LoadCameraAndRig(cam_uri_str_, cmod_str_, camera_device, rig);
-
-    // Load the imu
-    if (!imu_uri_str_.empty()) {
-        try {
-            imu_device = hal::IMU(imu_uri_str_);
-        } catch (hal::DeviceException& e) {
-            LOG(ERROR) << "Error loading imu device: " << e.what()
-                       << " ... proceeding without.";
-        }
-        imu_device.RegisterIMUDataCallback(&VINSystem::ImuCallback);
-    }
-    // Capture an image so we have some IMU data.
-    std::shared_ptr<hal::ImageArray> images = hal::ImageArray::Create();
-    while (imu_buffer.elements.size() == 0) {
-        camera_device.Capture(*images);
-    }
-
-    if (!use_system_time) {
-        sys_options_.imu_time_offset = imu_buffer.elements.back().time -
-                images->Ref().device_time();
-        std::cerr << "Setting initial time offset to " << sys_options_.imu_time_offset <<
-                     std:: endl;
-    }
-
-    return true;
-}
 
 void VINSystem::Shutdown()
 {
@@ -433,6 +391,8 @@ void VINSystem::Run()
 
 void VINSystem::UpdateCurrentPose()
 {
+    std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+
     std::shared_ptr<sdtrack::TrackerPose> new_pose = poses.back();
     if (poses.size() > 1) {
         new_pose->t_wp = poses[poses.size() - 2]->t_wp * tracker.t_ba().inverse();
@@ -500,7 +460,11 @@ void VINSystem::BaAndStartNewLandmarks()
         tracker.StartNewLandmarks(0);
     }
 
-    std::shared_ptr<sdtrack::TrackerPose> new_pose = poses.back();
+    std::shared_ptr<sdtrack::TrackerPose> new_pose;
+    {
+        std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+        new_pose = poses.back();
+    }
     // Update the tracks on this new pose.
     new_pose->tracks = tracker.GetNewTracks();
 
@@ -540,9 +504,12 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     if (is_prev_keyframe) {
         std::shared_ptr<sdtrack::TrackerPose> new_pose(new sdtrack::TrackerPose);
         if (poses.size() > 0) {
-            new_pose->t_wp = poses.back()->t_wp * last_t_ba.inverse();
-            new_pose->v_w = poses.back()->v_w;
-            new_pose->b = poses.back()->b;
+            {
+                std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+                new_pose->t_wp = poses.back()->t_wp * last_t_ba.inverse();
+                new_pose->v_w = poses.back()->v_w;
+                new_pose->b = poses.back()->b;
+            }
         } else {
             if (imu_buffer.elements.size() > 0) {
                 Eigen::Vector3t down = -imu_buffer.elements.front().a.normalized();
@@ -578,7 +545,10 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
 
     // Set the timestamp of the latest pose to this image's timestamp.
-    poses.back()->time = timestamp + sys_options_.imu_time_offset;
+    {
+        std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+        poses.back()->time = timestamp + sys_options_.imu_time_offset;
+    }
 
     guess = prev_delta_t_ba * prev_t_ba;
     if(guess.translation() == Eigen::Vector3d(0,0,0) &&
@@ -588,8 +558,13 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 
     if (sys_options_.use_imu_measurements &&
             sys_options_.use_imu_for_guess && poses.size() >= sys_options_.min_poses_for_imu) {
-        std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[poses.size() - 2];
-        std::shared_ptr<sdtrack::TrackerPose> pose2 = poses.back();
+        std::shared_ptr<sdtrack::TrackerPose> pose1;
+        std::shared_ptr<sdtrack::TrackerPose> pose2;
+        {
+            std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+            pose1 = poses[poses.size() - 2];
+            pose2 = poses.back();
+        }
         std::vector<ba::ImuPoseT<Scalar>> imu_poses;
         ba::PoseT<Scalar> start_pose;
         start_pose.t_wp = pose1->t_wp;
@@ -612,9 +587,13 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                     imu_poses.front().t_wp;
             pose2->t_wp = last_pose.t_wp;
             pose2->v_w = last_pose.v_w;
-            poses.back()->t_wp = pose2->t_wp;
-            poses.back()->v_w = pose2->v_w;
-            poses.back()->b = pose2->b;
+            {
+                std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+                poses.back()->t_wp = pose2->t_wp;
+                poses.back()->v_w = pose2->v_w;
+                poses.back()->b = pose2->b;
+            }
+
             // std::cerr << "Imu guess t_ab is\n" << guess.matrix3x4() << std::endl;
         }
     }
@@ -739,34 +718,9 @@ void VINSystem::InitTracker()
 
 }
 
-VINSystem::VINSystem(const std::string &settings_file_str)
+
+void VINSystem::StartThreads()
 {
-    // Read in settings file
-    cv::FileStorage fsSettings(settings_file_str.c_str(), cv::FileStorage::READ);
-    if(!fsSettings.isOpened())
-    {
-        LOG(FATAL) << "Failed to open settings file at: "
-                   << settings_file_str;
-    }
-
-    // Get sensor URI strings
-    cam_uri_str_ = static_cast<std::string>(fsSettings["Camera.uri"]);
-    cmod_str_ = static_cast<std::string>(fsSettings["Camera.config"]);
-    imu_uri_str_ = static_cast<std::string>(fsSettings["IMU.uri"]);
-
-    use_system_time =
-            static_cast<int>(fsSettings["Devices.use_system_time"]) != 0;
-
-    sys_options_.patch_size = fsSettings["Tracker.patch_size"];
-    sys_options_.num_features = fsSettings["Tracker.num_features"];
-
-    // Register this instance to receive the sensor messages from HAL.
-    callback_devices.push_back(this);
-
-    // Load camera and IMU
-    LoadDevices();
-
-    InitTracker();
 
     // Start AAC thread.
     aac_thread = std::shared_ptr<std::thread>
@@ -777,16 +731,16 @@ VINSystem::VINSystem(const std::string &settings_file_str)
             (new std::thread(&VINSystem::Run, this));
 }
 
-sdtrack::TrackerPose& VINSystem::GetLatestPose()
+void VINSystem::GetLatestPose(sdtrack::TrackerPose* out_pose)
 {
     std::lock_guard<std::mutex>lck(latest_pose_mutex_);
-    return *poses.back();
+    *out_pose = *poses.back();
 }
 
-sdtrack::TrackerPose& VINSystem::GetLatestOptimizedPose()
+void VINSystem::GetLatestOptimizedPose(sdtrack::TrackerPose* out_pose)
 {
     std::lock_guard<std::mutex>lck(latest_pose_mutex_);
-    return *poses.back();
+    *out_pose = *poses.back();
 }
 
 
