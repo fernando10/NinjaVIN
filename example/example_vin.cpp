@@ -62,11 +62,11 @@ int main(int argc, char **argv) {
                 std::chrono::duration_cast<std::chrono::duration<double> >
                 (t2 - t1).count();
 
-        LOG(INFO) << "Got pose->  trans: ["
-                  << latest_pose.t_wp.translation().transpose() << "]" <<
-                     " | speed: [" <<
-                     latest_pose.v_w.transpose()
-                  << "] in: " << ttrack << "s";
+//        LOG(INFO) << "Got pose->  trans: ["
+//                  << latest_pose.t_wp.translation().transpose() << "]" <<
+//                     " | speed: [" <<
+//                     latest_pose.v_w.transpose()
+//                  << "] in: " << ttrack << "s";
 
 #ifdef HAVE_SLAMViewer
         // Render pose
