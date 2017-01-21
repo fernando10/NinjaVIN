@@ -42,8 +42,7 @@ struct SystemOptions
 {
     SystemOptions(){}
     double gyro_sigma = 1.3088444e-1;
-    double gyro_bias_sigma =
-            IMU_GYRO_BIAS_SIGMA;
+    double gyro_bias_sigma = IMU_GYRO_BIAS_SIGMA;
     double accel_sigma = IMU_ACCEL_SIGMA;
     double accel_bias_sigma = IMU_ACCEL_BIAS_SIGMA;
     int pyramid_levels = 4;

@@ -12,6 +12,8 @@ std::vector<VINSystem*> VINSystem::callback_devices =
 
 VINSystem::VINSystem(const std::string &settings_file_str)
 {
+    srand(0);
+
     // Read in settings file
     cv::FileStorage fsSettings(settings_file_str.c_str(), cv::FileStorage::READ);
     if(!fsSettings.isOpened())
@@ -40,6 +42,7 @@ VINSystem::VINSystem(const std::string &settings_file_str)
 
     VLOG(1) << "Use system time: " << use_system_time;
 
+    sys_options_.imu_time_offset = fsSettings["IMU.time_offset"];
     sys_options_.patch_size = fsSettings["Tracker.patch_size"];
     sys_options_.num_features = fsSettings["Tracker.num_features"];
 
@@ -58,6 +61,7 @@ VINSystem::VINSystem(const std::string &settings_file_str)
     StartThreads();
 
 }
+
 
 template <typename BaType>
 void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
@@ -117,7 +121,7 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
         if (use_imu && sys_options_.use_imu_measurements && start_active_pose == start_pose_id &&
                 start_pose_id != 0) {
             start_pose_id--;
-            VLOG(4) << "expanding sp from " << start_pose_id - 1 << " to " << start_pose_id << std::endl;
+            std::cerr << "expanding sp from " << start_pose_id - 1 << " to " << start_pose_id << std::endl;
         }
     }
 
@@ -239,6 +243,8 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
         }
 
 
+        ba.Solve(sys_options_.num_ba_iterations);
+
         {
             std::lock_guard<std::mutex> lock(aac_mutex);
 
@@ -247,23 +253,18 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
             std::shared_ptr<sdtrack::TrackerPose> last_pose = is_keyframe ?
                         poses.back() : poses[poses.size() - 2];
 
-
             if (last_pose_id <= end_pose_id) {
                 // Get the pose of the last pose. This is used to calculate the relative
                 // transform from the pose to the current pose.
                 last_pose->t_wp = ba.GetPose(last_pose->opt_id[id]).t_wp;
-
-                if(is_keyframe){
-                    last_pose->v_w = ba.GetPose(last_pose->opt_id[id]).v_w;
-                    last_pose->b = ba.GetPose(last_pose->opt_id[id]).b;
-                    std::lock_guard<std::mutex>lck(latest_pose_mutex_);
-                    *latest_pose_ = *last_pose;
-                }
             }
-            // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
-            //              std::endl;
-                        VLOG(3) << "Last BA pose speed: " << last_pose->v_w.transpose();
-                        VLOG(3) << "Last BA pose trans: " << last_pose->t_wp.translation().transpose();
+            std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
+                         std::endl;
+            {
+                std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+                latest_pose_->t_wp = last_pose->t_wp;
+            }
+
 
             // Read out the pose and landmark values.
             for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
@@ -299,7 +300,7 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
                         if (sys_options_.do_outlier_rejection && poses.size() > POSES_TO_INIT &&
                                 !initialize_lm /*&& (do_adaptive_conditioning || !do_async_ba)*/) {
                             if (ratio > 0.3 && track->tracked == false &&
-                                    (end_pose_id >= sys_options_.min_poses_for_imu - 1 || !use_imu)) {
+                                    (end_pose_id >= sys_options_.min_poses_for_imu - 1 || use_imu)) {
                                 /*
               std::cerr << "Rejecting landmark with outliers : ";
               for (int id: landmark.proj_residuals) {
@@ -366,7 +367,42 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
                 chi2inv(sys_options_.adaptive_threshold, summary.num_cond_proj_residuals * 2);
         const Scalar cond_i_chi2_dist =
                 chi2inv(sys_options_.adaptive_threshold, BaType::kPoseDim);
+        //    const Scalar active_chi2_dist = chi2inv(adaptive_threshold, active_dims);
+        //plot_logs[0].Log(cond_i_chi2_dist, cond_inertial_error);
+        //plot_logs[2].Log(cond_v_chi2_dist, summary.cond_proj_error);
+        // plot_logs[2].Log(cond_chi2_dist, cond_error);
+        // plot_logs[2].Log(poses[start_active_pose]->v_w.norm(),
+        //                  poses.back()->v_w.norm());
 
+        /*
+    std::cerr << "chi2inv(" << adaptive_threshold << ", " << cond_dims <<
+                 "): " << cond_chi2_dist << " vs. " << cond_error <<
+                 std::endl;
+
+    std::cerr << "v_chi2inv(" << adaptive_threshold << ", " <<
+                 summary.num_cond_proj_residuals * 2 << "): " <<
+                 cond_v_chi2_dist << " vs. " <<
+                 summary.cond_proj_error << std::endl;
+
+    std::cerr << "i_chi2inv(" << adaptive_threshold << ", " <<
+                 BaType::kPoseDim << "):" << cond_i_chi2_dist << " vs. " <<
+                 cond_inertial_error << std::endl;
+
+    std::cerr << "ec/Xc: " << cond_error / cond_chi2_dist << " ea/Xa: " <<
+                 active_error / active_chi2_dist << std::endl;
+
+    std::cerr << summary.num_cond_proj_residuals * 2 << " cond proj residuals "
+                 " with dist: " << summary.cond_proj_error << " vs. " <<
+                 summary.num_proj_residuals * 2 <<
+                 " total proj residuals with dist: " <<
+                 summary.proj_error_ << " and " <<
+                 summary.num_cond_inertial_residuals * BaType::kPoseDim <<
+                 " total cond imu residuals with dist: " <<
+                 summary.cond_inertial_error <<
+                 " vs. " << summary.num_inertial_residuals *
+                 BaType::kPoseDim << " total imu residuals with dist : " <<
+                 summary.inertial_error << std::endl;
+    */
         // if (do_adaptive_conditioning) {
         if (num_active_poses > end_pose_id) {
             num_active_poses = orig_num_aac_poses;
@@ -395,10 +431,355 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
             prev_cond_error = cond_total_error;
         }
         // }
+        //plot_logs[1].Log(num_active_poses, poses.size());
+        //    Eigen::VectorXd data_to_save(6);
+        //    data_to_save << num_active_poses, poses.size(), cond_i_chi2_dist,
+        //        cond_inertial_error, cond_v_chi2_dist, summary.cond_proj_error;
 
-
+        //    plot_data.push_back(data_to_save);
     }
 }
+
+//template <typename BaType>
+//void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_active_poses,
+//                                   bool initialize_lm, bool do_adaptive_conditioning,
+//                                   uint32_t id, std::vector<uint32_t>& imu_residual_ids)
+//{
+//    if (initialize_lm) {
+//        use_imu = false;
+//    }
+
+//    if (sys_options_.reset_outliers) {
+//        for (std::shared_ptr<sdtrack::TrackerPose> pose : poses) {
+//            for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
+//                track->is_outlier = false;
+//            }
+//        }
+//        sys_options_.reset_outliers = false;
+//    }
+
+//    bundle_adjuster.debug_level_threshold = sys_options_.ba_debug_level;
+//    vi_bundle_adjuster.debug_level_threshold = sys_options_.vi_ba_debug_level;
+//    aac_bundle_adjuster.debug_level_threshold = sys_options_.aac_ba_debug_level;
+
+//    imu_residual_ids.clear();
+//    ba::Options<double> options;
+//    options.gyro_sigma = sys_options_.gyro_sigma;
+//    options.accel_sigma = sys_options_.accel_sigma;
+//    options.accel_bias_sigma = sys_options_.accel_bias_sigma;
+//    options.gyro_bias_sigma = sys_options_.gyro_bias_sigma;
+//    options.use_dogleg = sys_options_.use_dogleg;
+//    options.use_sparse_solver = true;
+//    options.param_change_threshold = 1e-10;
+//    options.error_change_threshold = 1e-3;
+//    options.use_robust_norm_for_proj_residuals =
+//            sys_options_.use_robust_norm_for_proj && !initialize_lm;
+//    options.projection_outlier_threshold = sys_options_.outlier_threshold;
+//    options.regularize_biases_in_batch = poses.size() < POSES_TO_INIT ||
+//            sys_options_.regularize_biases_in_batch;
+//    options.calculate_inertial_covariance_once = sys_options_.calculate_covariance_once;
+//    uint32_t num_outliers = 0;
+//    Sophus::SE3d t_ba;
+//    // Find the earliest pose touched by the current tracks.
+//    uint32_t start_active_pose, start_pose_id;
+
+//    uint32_t end_pose_id;
+//    {
+//        std::lock_guard<std::mutex> lock(aac_mutex);
+//        end_pose_id = poses.size() - 1;
+
+//        GetBaPoseRange(poses, num_active_poses, start_pose_id, start_active_pose);
+
+//        if (start_pose_id == end_pose_id) {
+//            return;
+//        }
+
+//        // Add an extra pose to conditon the IMU
+//        if (use_imu && sys_options_.use_imu_measurements && start_active_pose == start_pose_id &&
+//                start_pose_id != 0) {
+//            start_pose_id--;
+//            VLOG(4) << "expanding sp from " << start_pose_id - 1 << " to " << start_pose_id << std::endl;
+//        }
+//    }
+
+//    bool all_poses_active = start_active_pose == start_pose_id;
+
+
+//    // Do a bundle adjustment on the current set
+//    if (current_tracks && end_pose_id) {
+
+//        {
+//            std::lock_guard<std::mutex> lock(aac_mutex);
+//            if (use_imu) {
+//                ba.SetGravity(sys_options_.gravity_vector);
+//            }
+//            ba.Init(options, end_pose_id + 1,
+//                    current_tracks->size() * (end_pose_id + 1));
+//            for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+//                ba.AddCamera(rig.cameras_[cam_id]);
+//            }
+
+//            // First add all the poses and landmarks to ba.
+//            for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
+//                std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
+//                const bool is_active = ii >= start_active_pose && !initialize_lm;
+//                pose->opt_id[id] = ba.AddPose(
+//                            pose->t_wp, Eigen::VectorXt(), pose->v_w, pose->b,
+//                            is_active, pose->time);
+//                if (ii == start_active_pose && use_imu && all_poses_active) {
+//                    ba.RegularizePose(pose->opt_id[id], true, true, false, false);
+//                }
+
+//                if (use_imu && ii >= start_active_pose && ii > 0) {
+//                    std::vector<ba::ImuMeasurementT<Scalar>> meas =
+//                            imu_buffer.GetRange(poses[ii - 1]->time, pose->time);
+//                    /*std::cerr << "Adding imu residual between poses " << ii - 1 << " with "
+//                     " time " << poses[ii - 1]->time <<  " and " << ii <<
+//                     " with time " << pose->time << " with " << meas.size() <<
+//                     " measurements" << std::endl;*/
+
+//                    imu_residual_ids.push_back(
+//                                ba.AddImuResidual(poses[ii - 1]->opt_id[id],
+//                                pose->opt_id[id], meas));
+//                    // Store the conditioning edge of the IMU.
+//                    if (do_adaptive_conditioning) {
+//                        if (imu_cond_start_pose_id == -1 &&
+//                                !ba.GetPose(poses[ii - 1]->opt_id[id]).is_active &&
+//                                ba.GetPose(pose->opt_id[id]).is_active) {
+//                            // std::cerr << "Setting cond pose id to " << ii - 1 << std::endl;
+//                            imu_cond_start_pose_id = ii - 1;
+//                            imu_cond_residual_id = imu_residual_ids.back();
+//                            // std::cerr << "Setting cond residual id to " <<
+//                            //              imu_cond_residual_id << std::endl;
+//                        } else if ((uint32_t)imu_cond_start_pose_id == ii - 1) {
+//                            imu_cond_residual_id = imu_residual_ids.back();
+//                            // std::cerr << "Setting cond residual id to " <<
+//                            //              imu_cond_residual_id << std::endl;
+//                        }
+//                    }
+//                }
+
+//                if (!sys_options_.use_only_imu) {
+//                    for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
+//                        const bool constrains_active =
+//                                track->keypoints.size() + ii >= start_active_pose;
+//                        if (track->num_good_tracked_frames <= 1 || track->is_outlier ||
+//                                !constrains_active) {
+//                            /*
+//            std::cerr << "ignoring track " << track->id << " with " <<
+//                         track->keypoints.size() << "keypoints with ngf " <<
+//                         track->num_good_tracked_frames << " outlier: " <<
+//                         track->is_outlier << " constraints " << constrains_active <<
+//                         std::endl;
+//                         */
+//                            track->external_id[id] = UINT_MAX;
+//                            continue;
+//                        }
+
+//                        Eigen::Vector4d ray;
+//                        ray.head<3>() = track->ref_keypoint.ray;
+//                        ray[3] = track->ref_keypoint.rho;
+//                        ray = sdtrack::MultHomogeneous(
+//                                    pose->t_wp * rig.cameras_[track->ref_cam_id]->Pose(), ray);
+//                        bool active = track->id != tracker.longest_track_id() ||
+//                                !all_poses_active || use_imu || initialize_lm;
+//                        if (!active) {
+//                            std::cerr << "Landmark " << track->id << " inactive. outlier = " <<
+//                                         track->is_outlier << " length: " <<
+//                                         track->keypoints.size() << std::endl;
+//                        }
+//                        track->external_id[id] =
+//                                ba.AddLandmark(ray, pose->opt_id[id], track->ref_cam_id, active);
+//                    }
+//                }
+//            }
+
+//            if (!sys_options_.use_only_imu) {
+//                // Now add all reprojections to ba)
+//                for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
+//                    std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
+//                    for (std::shared_ptr<sdtrack::DenseTrack> track : pose->tracks) {
+//                        if (track->external_id[id] == UINT_MAX) {
+//                            continue;
+//                        }
+//                        for (uint32_t cam_id = 0; cam_id < rig.cameras_.size(); ++cam_id) {
+//                            for (size_t jj = 0; jj < track->keypoints.size() ; ++jj) {
+//                                if (track->keypoints[jj][cam_id].tracked) {
+//                                    const Eigen::Vector2d& z = track->keypoints[jj][cam_id].kp;
+//                                    if (ba.GetNumPoses() > (pose->opt_id[id] + jj)) {
+//                                        ba.AddProjectionResidual(
+//                                                    z, pose->opt_id[id] + jj,
+//                                                    track->external_id[id], cam_id, 2.0);
+//                                    }
+//                                }
+//                            }
+//                        }
+//                    }
+//                }
+//            }
+//        }
+
+
+//        {
+//            std::lock_guard<std::mutex> lock(aac_mutex);
+
+//            uint32_t last_pose_id =
+//                    is_keyframe ? poses.size() - 1 : poses.size() - 2;
+//            std::shared_ptr<sdtrack::TrackerPose> last_pose = is_keyframe ?
+//                        poses.back() : poses[poses.size() - 2];
+
+
+//            if (last_pose_id <= end_pose_id) {
+//                // Get the pose of the last pose. This is used to calculate the relative
+//                // transform from the pose to the current pose.
+//                last_pose->t_wp = ba.GetPose(last_pose->opt_id[id]).t_wp;
+
+//                if(is_keyframe){
+//                    last_pose->v_w = ba.GetPose(last_pose->opt_id[id]).v_w;
+//                    last_pose->b = ba.GetPose(last_pose->opt_id[id]).b;
+//                    std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+//                    *latest_pose_ = *last_pose;
+//                }
+//            }
+//            // std::cerr << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
+//            //              std::endl;
+//                        VLOG(3) << "Last BA pose speed: " << last_pose->v_w.transpose();
+//                        VLOG(3) << "Last BA pose trans: " << last_pose->t_wp.translation().transpose();
+
+//            // Read out the pose and landmark values.
+//            for (uint32_t ii = start_pose_id ; ii <= end_pose_id ; ++ii) {
+//                std::shared_ptr<sdtrack::TrackerPose> pose = poses[ii];
+//                const ba::PoseT<double>& ba_pose = ba.GetPose(pose->opt_id[id]);
+
+//                if (!initialize_lm) {
+//                    pose->t_wp = ba_pose.t_wp;
+//                    if (use_imu) {
+//                        pose->v_w = ba_pose.v_w;
+//                        pose->b = ba_pose.b;
+//                    }
+//                }
+
+//                if (!sys_options_.use_only_imu) {
+//                    // Here the last pose is actually t_wb and the current pose t_wa.
+//                    last_t_ba = t_ba;
+//                    t_ba = last_pose->t_wp.inverse() * pose->t_wp;
+//                    for (std::shared_ptr<sdtrack::DenseTrack> track: pose->tracks) {
+//                        if (track->external_id[id] == UINT_MAX) {
+//                            continue;
+//                        }
+
+//                        if (!initialize_lm) {
+//                            track->t_ba = t_ba;
+//                        }
+
+//                        // Get the landmark location in the world frame.
+//                        const Eigen::Vector4d& x_w =
+//                                ba.GetLandmark(track->external_id[id]);
+//                        double ratio = ba.LandmarkOutlierRatio(track->external_id[id]);
+
+//                        if (sys_options_.do_outlier_rejection && poses.size() > POSES_TO_INIT &&
+//                                !initialize_lm /*&& (do_adaptive_conditioning || !do_async_ba)*/) {
+//                            if (ratio > 0.3 && track->tracked == false &&
+//                                    (end_pose_id >= sys_options_.min_poses_for_imu - 1 || !use_imu)) {
+//                                /*
+//              std::cerr << "Rejecting landmark with outliers : ";
+//              for (int id: landmark.proj_residuals) {
+//                typename BaType::ProjectionResidual res =
+//                    ba.GetProjectionResidual(id);
+//                std::cerr << res.residual.transpose() << "(" << res.residual.norm() <<
+//                             "), ";
+//              }
+//              std::cerr << std::endl;
+//              */
+//                                num_outliers++;
+//                                track->is_outlier = true;
+//                            } else {
+//                                track->is_outlier = false;
+//                            }
+//                        }
+
+//                        // Make the ray relative to the pose.
+//                        Eigen::Vector4d x_r =
+//                                sdtrack::MultHomogeneous(
+//                                    (pose->t_wp * rig.cameras_[track->ref_cam_id]->Pose()).inverse(), x_w);
+//                        // Normalize the xyz component of the ray to compare to the original
+//                        // ray.
+//                        x_r /= x_r.head<3>().norm();
+//                        /*
+//          if (track->keypoints.size() >= min_lm_measurements_for_drawing) {
+//            std::cerr << "Setting rho for track " << track->id << " with " <<
+//                         track->keypoints.size() << " kps from " <<
+//                         track->ref_keypoint.rho << " to " << x_r[3] << std::endl;
+//          }
+//          */
+//                        track->ref_keypoint.rho = x_r[3];
+//                    }
+//                }
+//            }
+
+//        }
+
+//    }
+//    const ba::SolutionSummary<Scalar>& summary = ba.GetSolutionSummary();
+//    // std::cerr << "Rejected " << num_outliers << " outliers." << std::endl;
+
+//    if (use_imu && imu_cond_start_pose_id != -1 && do_adaptive_conditioning) {
+//        const uint32_t cond_dims =
+//                summary.num_cond_inertial_residuals * BaType::kPoseDim +
+//                summary.num_cond_proj_residuals * 2;
+//        //    const uint32_t active_dims = summary.num_inertial_residuals +
+//        //        summary.num_proj_residuals - cond_dims;
+//        const Scalar cond_error = summary.cond_inertial_error +
+//                summary.cond_proj_error;
+//        //    const Scalar active_error =
+//        //        summary.inertial_error + summary.proj_error_ - cond_error;
+
+//        const double cond_inertial_error =
+//                ba.GetImuResidual(
+//                    imu_cond_residual_id).mahalanobis_distance;
+
+//        if (prev_cond_error == -1) {
+//            prev_cond_error = DBL_MAX;
+//        }
+
+//        //    const Scalar cond_chi2_dist = chi2inv(adaptive_threshold, cond_dims);
+//        const Scalar cond_v_chi2_dist =
+//                chi2inv(sys_options_.adaptive_threshold, summary.num_cond_proj_residuals * 2);
+//        const Scalar cond_i_chi2_dist =
+//                chi2inv(sys_options_.adaptive_threshold, BaType::kPoseDim);
+
+//        // if (do_adaptive_conditioning) {
+//        if (num_active_poses > end_pose_id) {
+//            num_active_poses = orig_num_aac_poses;
+//            std::cerr << "Reached batch solution. resetting number of poses to " <<
+//                         sys_options_.num_ba_poses << std::endl;
+//        }
+
+//        if (cond_error == 0 || cond_dims == 0) {
+//            // status = OptStatus_NoChange;
+//        } else {
+//            const double cond_total_error =
+//                    (cond_inertial_error + summary.cond_proj_error);
+//            const double inertial_ratio = cond_inertial_error / cond_i_chi2_dist;
+//            const double visual_ratio = summary.cond_proj_error / cond_v_chi2_dist;
+//            if ((inertial_ratio > 1.0 || visual_ratio > 1.0) &&
+//                    (cond_total_error <= prev_cond_error) &&
+//                    (((prev_cond_error - cond_total_error) / prev_cond_error) > 0.00001)) {
+//                num_active_poses += 30;//(start_active_pose - start_pose);
+//                // std::cerr << "INCREASING WINDOW SIZE TO " << num_active_poses <<
+//                //              std::endl;
+//            } else /*if (ratio < 0.3)*/ {
+//                num_active_poses = orig_num_aac_poses;
+//                // std::cerr << "RESETTING WINDOW SIZE TO " << num_active_poses <<
+//                //              std::endl;
+//            }
+//            prev_cond_error = cond_total_error;
+//        }
+//        // }
+
+
+//    }
+//}
 
 
 void VINSystem::Shutdown()
@@ -413,13 +794,6 @@ const std::vector<std::shared_ptr<sdtrack::TrackerPose> >&
 VINSystem::GetOptimzedPoses()
 {
     return poses;
-//    if(!poses.size()){
-//        out_poses = nullptr;
-//        return false;
-//    }else{
-//        out_poses = &poses;
-//    }
-//    return true;
 }
 
 void VINSystem::Run()
@@ -457,7 +831,6 @@ void VINSystem::Run()
             VLOG(2) << "Capture image failed...waiting for a bit.";
             usleep(1000);
         }
-        //TOOD: Remove this
     }
 }
 
@@ -551,6 +924,7 @@ void VINSystem::BaAndStartNewLandmarks()
 
 void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
 {
+    std::cerr << "Processing image with timestamp " << timestamp << std::endl;
 #ifdef CHECK_NANS
     _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
                            ~(_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
@@ -562,6 +936,7 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
     }
 
     frame_count++;
+
 
     Sophus::SE3d guess;
     // If this is a keyframe, set it as one on the tracker.
@@ -607,17 +982,23 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
             // new_pose->b << 0.00209809 , 0.00167743, -7.46213e-05 ,
             //     0.151629 ,0.0224114, 0.826392;
 
+            // gw_block
+            // new_pose->b << 0.00288919,  0.0023673, 0.00714931 ,
+            //     -0.156199,   0.258919,   0.422379;
+
+            // gw_car_block
+            // new_pose->b << 0.00217338, -0.00122939,  0.00220202,
+            //     -0.175229,  -0.0731785,    0.548693;
+
         }
         {
-            std::lock_guard<std::mutex>lck(aac_mutex);
+            std::unique_lock<std::mutex>(aac_mutex);
             poses.push_back(new_pose);
         }
     }
 
     // Set the timestamp of the latest pose to this image's timestamp.
-
     poses.back()->time = timestamp + sys_options_.imu_time_offset;
-
 
     guess = prev_delta_t_ba * prev_t_ba;
     if(guess.translation() == Eigen::Vector3d(0,0,0) &&
@@ -654,8 +1035,6 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
             poses.back()->t_wp = pose2->t_wp;
             poses.back()->v_w = pose2->v_w;
             poses.back()->b = pose2->b;
-
-
             // std::cerr << "Imu guess t_ab is\n" << guess.matrix3x4() << std::endl;
         }
     }
@@ -673,7 +1052,6 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         }
         // Update the pose t_ab based on the result from the tracker.
         UpdateCurrentPose();
-
     }
 
     if (sys_options_.do_keyframing) {
@@ -697,9 +1075,9 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                 total_trans > 0.2 || total_rot > 0.1
                 /*|| tracker.num_successful_tracks() < 64*/;
 
-        VLOG(3) << "\tRatio: " << track_ratio << " trans: " << total_trans <<
-                   "av: depth: " << average_depth << " rot: " <<
-                   total_rot << std::endl;
+        std::cerr << "\tRatio: " << track_ratio << " trans: " << total_trans <<
+                     "av: depth: " << average_depth << " rot: " <<
+                     total_rot << std::endl;
 
         {
             std::lock_guard<std::mutex> lock(aac_mutex);
@@ -725,19 +1103,19 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         tracker.AddKeyframe();
     }
 
-    VLOG(3) << "Num successful : " << tracker.num_successful_tracks() <<
-               " keyframe tracks: " << keyframe_tracks << std::endl;
+    std::cerr << "Num successful : " << tracker.num_successful_tracks() <<
+                 " keyframe tracks: " << keyframe_tracks << std::endl;
 
     if (!is_manual_mode) {
         BaAndStartNewLandmarks();
     }
 
     if (is_keyframe) {
-        VLOG(3) << "KEYFRAME." << std::endl;
+        std::cerr << "KEYFRAME." << std::endl;
         keyframe_tracks = tracker.GetCurrentTracks().size();
-        VLOG(3) << "New keyframe tracks: " << keyframe_tracks << std::endl;
+        std::cerr << "New keyframe tracks: " << keyframe_tracks << std::endl;
     } else {
-        VLOG(3) << "NOT KEYFRAME." << std::endl;
+        std::cerr << "NOT KEYFRAME." << std::endl;
     }
 
     current_tracks = &tracker.GetCurrentTracks();
@@ -748,9 +1126,212 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
                             _MM_MASK_DIV_ZERO));
 #endif
 
-    VLOG(1) << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
-               " FPS: " << frame_count / sdtrack::Toc(start_time) << std::endl;
+    std::cerr << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
+                 " FPS: " << frame_count / sdtrack::Toc(start_time) << std::endl;
 }
+
+//void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
+//{
+//#ifdef CHECK_NANS
+//    _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() &
+//                           ~(_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
+//                             _MM_MASK_DIV_ZERO));
+//#endif
+
+//    if (frame_count == 0) {
+//        start_time = sdtrack::Tic();
+//    }
+
+//    frame_count++;
+
+//    Sophus::SE3d guess;
+//    // If this is a keyframe, set it as one on the tracker.
+//    prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
+
+//    if (is_prev_keyframe) {
+//        prev_t_ba = Sophus::SE3d();
+//    } else {
+//        prev_t_ba = tracker.t_ba();
+//    }
+
+//    // Add a pose to the poses array
+//    if (is_prev_keyframe) {
+//        std::shared_ptr<sdtrack::TrackerPose> new_pose(new sdtrack::TrackerPose);
+//        if (poses.size() > 0) {
+//            new_pose->t_wp = poses.back()->t_wp * last_t_ba.inverse();
+//            new_pose->v_w = poses.back()->v_w;
+//            new_pose->b = poses.back()->b;
+//        } else {
+//            if (imu_buffer.elements.size() > 0) {
+//                Eigen::Vector3t down = -imu_buffer.elements.front().a.normalized();
+//                std::cerr << "Down vector based on first imu meas: " <<
+//                             down.transpose() << std::endl;
+
+//                // compute path transformation
+//                Eigen::Vector3t forward(1.0, 0.0, 0.0);
+//                Eigen::Vector3t right = down.cross(forward);
+//                right.normalize();
+//                forward = right.cross(down);
+//                forward.normalize();
+
+//                Eigen::Matrix4t base = Eigen::Matrix4t::Identity();
+//                base.block<1, 3>(0, 0) = forward;
+//                base.block<1, 3>(1, 0) = right;
+//                base.block<1, 3>(2, 0) = down;
+//                new_pose->t_wp = Sophus::SE3t(base);
+//            }
+//            // Set the initial velocity and bias. The initial pose is initialized to
+//            // align the gravity plane
+//            new_pose->v_w.setZero();
+//            new_pose->b.setZero();
+//            // corridor
+//            // new_pose->b << 0.00209809 , 0.00167743, -7.46213e-05 ,
+//            //     0.151629 ,0.0224114, 0.826392;
+
+//        }
+//        {
+//            std::lock_guard<std::mutex>lck(aac_mutex);
+//            poses.push_back(new_pose);
+//        }
+//    }
+
+//    // Set the timestamp of the latest pose to this image's timestamp.
+
+//    poses.back()->time = timestamp + sys_options_.imu_time_offset;
+
+
+//    guess = prev_delta_t_ba * prev_t_ba;
+//    if(guess.translation() == Eigen::Vector3d(0,0,0) &&
+//            poses.size() > 1) {
+//        guess.translation() = Eigen::Vector3d(0, 0, 0.001);
+//    }
+
+//    if (sys_options_.use_imu_measurements &&
+//            sys_options_.use_imu_for_guess && poses.size() >= sys_options_.min_poses_for_imu) {
+//        std::shared_ptr<sdtrack::TrackerPose> pose1 = poses[poses.size() - 2];
+//        std::shared_ptr<sdtrack::TrackerPose> pose2 = poses.back();
+//        std::vector<ba::ImuPoseT<Scalar>> imu_poses;
+//        ba::PoseT<Scalar> start_pose;
+//        start_pose.t_wp = pose1->t_wp;
+//        start_pose.b = pose1->b;
+//        start_pose.v_w = pose1->v_w;
+//        start_pose.time = pose1->time;
+//        // Integrate the measurements since the last frame.
+//        std::vector<ba::ImuMeasurementT<Scalar> > meas =
+//                imu_buffer.GetRange(pose1->time, pose2->time);
+//        decltype(vi_bundle_adjuster)::ImuResidual::IntegrateResidual(
+//                    start_pose, meas, start_pose.b.head<3>(), start_pose.b.tail<3>(),
+//                    vi_bundle_adjuster.GetImuCalibration().g_vec, imu_poses);
+
+//        if (imu_poses.size() > 1) {
+//            // std::cerr << "Prev guess t_ab is\n" << guess.matrix3x4() << std::endl;
+//            ba::ImuPoseT<Scalar>& last_pose = imu_poses.back();
+//            //      guess.so3() = last_pose.t_wp.so3().inverse() *
+//            //          imu_poses.front().t_wp.so3();
+//            guess = last_pose.t_wp.inverse() *
+//                    imu_poses.front().t_wp;
+//            pose2->t_wp = last_pose.t_wp;
+//            pose2->v_w = last_pose.v_w;
+//            poses.back()->t_wp = pose2->t_wp;
+//            poses.back()->v_w = pose2->v_w;
+//            poses.back()->b = pose2->b;
+
+
+//            // std::cerr << "Imu guess t_ab is\n" << guess.matrix3x4() << std::endl;
+//        }
+//    }
+
+//    {
+//        std::lock_guard<std::mutex> lock(aac_mutex);
+
+//        tracker.AddImage(images, guess);
+//        tracker.EvaluateTrackResiduals(0, tracker.GetImagePyramid(),
+//                                       tracker.GetCurrentTracks());
+
+//        if (!is_manual_mode) {
+//            tracker.OptimizeTracks(-1, optimize_landmarks, optimize_pose);
+//            tracker.PruneTracks();
+//        }
+//        // Update the pose t_ab based on the result from the tracker.
+//        UpdateCurrentPose();
+
+//    }
+
+//    if (sys_options_.do_keyframing) {
+//        const double track_ratio = (double)tracker.num_successful_tracks() /
+//                (double)keyframe_tracks;
+//        const double total_trans = tracker.t_ba().translation().norm();
+//        const double total_rot = tracker.t_ba().so3().log().norm();
+
+//        double average_depth = 0;
+//        if (current_tracks == nullptr || current_tracks->size() == 0) {
+//            average_depth = 1;
+//        } else {
+//            for (std::shared_ptr<sdtrack::DenseTrack>& track : *current_tracks) {
+//                average_depth += (1.0 / track->ref_keypoint.rho);
+//            }
+//            average_depth /= current_tracks->size();
+//        }
+
+
+//        bool keyframe_condition = track_ratio < 0.7 ||
+//                total_trans > 0.2 || total_rot > 0.1
+//                /*|| tracker.num_successful_tracks() < 64*/;
+
+//        VLOG(3) << "\tRatio: " << track_ratio << " trans: " << total_trans <<
+//                   "av: depth: " << average_depth << " rot: " <<
+//                   total_rot << std::endl;
+
+//        {
+//            std::lock_guard<std::mutex> lock(aac_mutex);
+//            if (keyframe_tracks != 0) {
+//                if (keyframe_condition) {
+//                    is_keyframe = true;
+//                } else {
+//                    is_keyframe = false;
+//                }
+
+
+//                // If this is a keyframe, set it as one on the tracker.
+//                prev_delta_t_ba = tracker.t_ba() * prev_t_ba.inverse();
+
+//                if (is_keyframe) {
+//                    tracker.AddKeyframe();
+//                }
+//                is_prev_keyframe = is_keyframe;
+//            }
+//        }
+//    } else {
+//        std::lock_guard<std::mutex> lock(aac_mutex);
+//        tracker.AddKeyframe();
+//    }
+
+//    VLOG(3) << "Num successful : " << tracker.num_successful_tracks() <<
+//               " keyframe tracks: " << keyframe_tracks << std::endl;
+
+//    if (!is_manual_mode) {
+//        BaAndStartNewLandmarks();
+//    }
+
+//    if (is_keyframe) {
+//        VLOG(3) << "KEYFRAME." << std::endl;
+//        keyframe_tracks = tracker.GetCurrentTracks().size();
+//        VLOG(3) << "New keyframe tracks: " << keyframe_tracks << std::endl;
+//    } else {
+//        VLOG(3) << "NOT KEYFRAME." << std::endl;
+//    }
+
+//    current_tracks = &tracker.GetCurrentTracks();
+
+//#ifdef CHECK_NANS
+//    _MM_SET_EXCEPTION_MASK(_MM_GET_EXCEPTION_MASK() |
+//                           (_MM_MASK_INVALID | _MM_MASK_OVERFLOW |
+//                            _MM_MASK_DIV_ZERO));
+//#endif
+
+//    VLOG(1) << "FRAME : " << frame_count << " KEYFRAME: " << poses.size() <<
+//               " FPS: " << frame_count / sdtrack::Toc(start_time) << std::endl;
+//}
 
 
 
@@ -789,9 +1370,9 @@ void VINSystem::StartThreads()
             (new std::thread(&VINSystem::DoAAC, this));
 
     // Start main trakcing thread
-//    tracking_thread = std::shared_ptr<std::thread>
-//            (new std::thread(&VINSystem::Run, this));
-    Run();
+    tracking_thread = std::shared_ptr<std::thread>
+            (new std::thread(&VINSystem::Run, this));
+    //    Run();
 }
 
 bool VINSystem::GetLatestPose(sdtrack::TrackerPose* out_pose, bool integrate_imu)

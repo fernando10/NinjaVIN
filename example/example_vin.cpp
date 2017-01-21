@@ -44,8 +44,6 @@ int main(int argc, char **argv) {
     sdtrack::TrackerPose latest_pose;
     while(1)
     {
-        usleep(1000);
-        continue;
 
         std::chrono::steady_clock::time_point t1 =
                 std::chrono::steady_clock::now();
@@ -80,7 +78,7 @@ int main(int argc, char **argv) {
 
 
         // Wait for a bit...
-        usleep(5000);
+        usleep(3000);
     }
 
     return 0;

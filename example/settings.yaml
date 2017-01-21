@@ -5,8 +5,8 @@
 #--------------------------------------------------------------------------------------------
 
 #NinjaCar Lab Run
-#Camera.uri: "log:[realtime=0]///Users/feno/Projects/DATA/NinjaCar/FishEye/lab_run.log"
-#Camera.config: "cameras_imu.xml"
+# Camera.uri: "log:[realtime=0]///Users/feno/Projects/DATA/NinjaCar/FishEye/lab_run.log"
+# Camera.config: "cameras_imu.xml"
 
 #Peanut CU Lobby
 Camera.uri: "trailmix://files:///Users/feno/DATA/Peanut/CU_Lobby/superframes/*.pgm"
@@ -21,6 +21,9 @@ Camera.config: "cameras.xml"
 
 #Peanut CU Lobby
 IMU.uri: "join://trailmix://files://"
+
+
+IMU.time_offset: 0.0
 
 #--------------------------------------------------------------------------------------------
 # System Parameters.
