@@ -260,12 +260,8 @@ void VINSystem::DoBundleAdjustment(BaType& ba, bool use_imu, uint32_t& num_activ
                 // transform from the pose to the current pose.
                 last_pose->t_wp = ba.GetPose(last_pose->opt_id[id]).t_wp;
             }
-            VLOG(3) << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
-                         std::endl;
-            {
-                std::lock_guard<std::mutex>lck(latest_pose_mutex_);
-                latest_pose_->t_wp = last_pose->t_wp;
-            }
+//            VLOG(3) << "last pose t_wp: " << std::endl << last_pose->t_wp.matrix() <<
+//                         std::endl;
 
 
             // Read out the pose and landmark values.
@@ -482,6 +478,15 @@ void VINSystem::Run()
                 cvmat_images.push_back(images->at(ii)->Mat());
             }
             ProcessImage(cvmat_images, timestamp);
+            {
+            std::lock_guard<std::mutex>lck(latest_pose_mutex_);
+            std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
+            latest_pose_->t_wp = last_pose->t_wp;
+            latest_pose_->v_w = last_pose->v_w;
+            latest_pose_->b = last_pose->b;
+            latest_pose_->cam_params = last_pose->cam_params;
+            latest_pose_->time = last_pose->time;
+            }
         }else{
             VLOG(2) << "Capture image failed...waiting for a bit.";
             usleep(1000);
@@ -648,8 +653,6 @@ void VINSystem::ProcessImage(std::vector<cv::Mat>& images, double timestamp)
         {
             std::unique_lock<std::mutex>(aac_mutex);
             poses.push_back(new_pose);
-            std::unique_lock<std::mutex>(latest_pose_mutex_);
-            latest_pose_->t_wp = new_pose->t_wp;
         }
     }
 

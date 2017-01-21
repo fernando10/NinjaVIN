@@ -20,15 +20,13 @@ int main(int argc, char **argv) {
 #ifdef HAVE_SLAMViewer
     // Create a GUI
     SLAMViewerOptions viewer_options;
-    viewer_options.window_name = "NinjaVIN";
+    viewer_options.window_name = "NinjaCar - Localizer";
 
     SLAMViewer* viewer = new SLAMViewer(viewer_options);
 
-    ViewerPath& path = viewer->CreatePath("car",
-                                          (Eigen::Vector3d() << 1,0,0).finished());
+    ViewerPath& path = viewer->CreatePath("car_path", Colors::GREEN);
 
 #endif
-
 
     if (argc < 2) {
         LOG(ERROR)<<
@@ -77,8 +75,8 @@ int main(int argc, char **argv) {
 #endif
 
 
-        // Wait for a bit...
-        usleep(3000);
+        // Wait for a bit... (20Hz)
+        usleep(50000);
     }
 
     return 0;
