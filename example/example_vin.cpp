@@ -20,15 +20,13 @@ int main(int argc, char **argv) {
 #ifdef HAVE_SLAMViewer
     // Create a GUI
     SLAMViewerOptions viewer_options;
-    viewer_options.window_name = "NinjaVIN";
+    viewer_options.window_name = "NinjaCar - Localizer";
 
     SLAMViewer* viewer = new SLAMViewer(viewer_options);
 
-    ViewerPath& path = viewer->CreatePath("car",
-                                          (Eigen::Vector3d() << 1,0,0).finished());
+    ViewerPath& path = viewer->CreatePath("car_path", Colors::GREEN);
 
 #endif
-
 
     if (argc < 2) {
         LOG(ERROR)<<
@@ -44,8 +42,6 @@ int main(int argc, char **argv) {
     sdtrack::TrackerPose latest_pose;
     while(1)
     {
-        usleep(1000);
-        continue;
 
         std::chrono::steady_clock::time_point t1 =
                 std::chrono::steady_clock::now();
@@ -64,11 +60,11 @@ int main(int argc, char **argv) {
                 std::chrono::duration_cast<std::chrono::duration<double> >
                 (t2 - t1).count();
 
-        LOG(INFO) << "Got pose->  trans: ["
-                  << latest_pose.t_wp.translation().transpose() << "]" <<
-                     " | speed: [" <<
-                     latest_pose.v_w.transpose()
-                  << "] in: " << ttrack << "s";
+//        LOG(INFO) << "Got pose->  trans: ["
+//                  << latest_pose.t_wp.translation().transpose() << "]" <<
+//                     " | speed: [" <<
+//                     latest_pose.v_w.transpose()
+//                  << "] in: " << ttrack << "s";
 
 #ifdef HAVE_SLAMViewer
         // Render pose
@@ -79,8 +75,8 @@ int main(int argc, char **argv) {
 #endif
 
 
-        // Wait for a bit...
-        usleep(5000);
+        // Wait for a bit... (20Hz)
+        usleep(50000);
     }
 
     return 0;
