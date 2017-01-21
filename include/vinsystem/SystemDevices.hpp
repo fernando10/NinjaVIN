@@ -23,6 +23,7 @@ void VINSystem::ProcessImuMessage(const hal::ImuMsg& ref)
     hal::ReadVector(ref.gyro(), &w);
     // std::cerr << "Added accel: " << a.transpose() << " and gyro " <<
     //             w.transpose() << " at time " << timestamp << std::endl;
+    std::unique_lock<std::mutex>(imu_buffer_mutex_);
     imu_buffer.AddElement(ba::ImuMeasurementT<Scalar>(w, a, timestamp));
 }
 

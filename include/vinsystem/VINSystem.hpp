@@ -107,6 +107,8 @@ public:
      */
     bool GetLatestPose(sdtrack::TrackerPose *out_pose, bool integrate_imu=true);
 
+    const std::vector<std::shared_ptr<sdtrack::TrackerPose> >& GetOptimzedPoses();
+
     /**
      * @brief Shutdown Kills the tracking thread and exits cleanly.
      */
@@ -178,6 +180,8 @@ private:
     std::string cmod_str_;
 
     std::mutex latest_pose_mutex_;
+    std::mutex tracker_mutex_;
+    std::mutex imu_buffer_mutex_;
 
     std::shared_ptr<sdtrack::TrackerPose> latest_pose_;
 

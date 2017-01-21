@@ -32,3 +32,5 @@ add_executable(example_vin ${SRCS})
 target_link_libraries( example_vin
   ${REQUIRED_LIBRARIES}
   )
+
+add_dependencies( example_vin vinsystem )

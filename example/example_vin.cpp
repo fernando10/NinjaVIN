@@ -26,6 +26,7 @@ int main(int argc, char **argv) {
 
     ViewerPath& path = viewer->CreatePath("car",
                                           (Eigen::Vector3d() << 1,0,0).finished());
+
 #endif
 
 
@@ -43,6 +44,9 @@ int main(int argc, char **argv) {
     sdtrack::TrackerPose latest_pose;
     while(1)
     {
+        usleep(1000);
+        continue;
+
         std::chrono::steady_clock::time_point t1 =
                 std::chrono::steady_clock::now();
 
@@ -70,7 +74,6 @@ int main(int argc, char **argv) {
         // Render pose
         {
             std::unique_lock<std::mutex>lck(viewer->viewer_mutex);
-            LOG(INFO) << "Pusing back pose to viewer";
             path.poses->push_back(latest_pose.t_wp);
         }
 #endif
