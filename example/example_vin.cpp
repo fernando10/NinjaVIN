@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
                 std::chrono::steady_clock::now();
 
         // Copy the latest pose.
-        if( !SLAMSystem.GetLatestPose(&latest_pose, false)){
+        if( !SLAMSystem.GetLatestPose(&latest_pose)){
             // Failed to get pose...normal at system initialization
             usleep(1000);
             continue;

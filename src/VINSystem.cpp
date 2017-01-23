@@ -6,6 +6,23 @@
 
 namespace compass
 {
+
+///////////////////////////////////////////////////////////////////////////////
+// Convenience functions to convert a pose between vision and robotics
+// coordinate conventions.
+// Poses used in BA need to be in the vision coordinate convention
+
+inline Sophus::SE3d VisionToRobotics(Sophus::SE3d T_v){
+  Sophus::SE3t M_vr;
+  M_vr.so3() = calibu::RdfRobotics.inverse();
+  return T_v * M_vr;
+}
+inline Sophus::SE3d RoboticsToVision(Sophus::SE3d T_r){
+  Sophus::SE3t M_rv;
+  M_rv.so3() = calibu::RdfRobotics;
+  return T_r * M_rv;
+}
+
 // initialization of static variable
 std::vector<VINSystem*> VINSystem::callback_devices =
         std::vector<VINSystem*>();
@@ -38,7 +55,13 @@ VINSystem::VINSystem(const std::string &settings_file_str)
 
 
     use_system_time =
-            static_cast<int>(fsSettings["Devices.use_system_time"]) != 0;
+            static_cast<int>(fsSettings["System.use_system_time"]) != 0;
+
+    planar_motion =
+            static_cast<int>(fsSettings["System.planar_motion"]) != 0;
+
+    integrate_imu=
+            static_cast<int>(fsSettings["System.use_imu_integration"]) != 0;
 
     VLOG(1) << "Use system time: " << use_system_time;
 
@@ -479,9 +502,14 @@ void VINSystem::Run()
             }
             ProcessImage(cvmat_images, timestamp);
             {
+                // Get the lastest estimated pose.
             std::lock_guard<std::mutex>lck(latest_pose_mutex_);
             std::shared_ptr<sdtrack::TrackerPose> last_pose = poses.back();
-            latest_pose_->t_wp = last_pose->t_wp;
+            latest_pose_->t_wp = VisionToRobotics(last_pose->t_wp);
+            if(planar_motion){
+                Eigen::Vector3d& t = latest_pose_->t_wp.translation();
+                t[2] = 0; // Set z to 0
+            }
             latest_pose_->v_w = last_pose->v_w;
             latest_pose_->b = last_pose->b;
             latest_pose_->cam_params = last_pose->cam_params;
@@ -833,7 +861,7 @@ void VINSystem::StartThreads()
     //    Run();
 }
 
-bool VINSystem::GetLatestPose(sdtrack::TrackerPose* out_pose, bool integrate_imu)
+bool VINSystem::GetLatestPose(sdtrack::TrackerPose* out_pose)
 {
     if(poses.size() == 0){
         // No poses created, nothing to do.

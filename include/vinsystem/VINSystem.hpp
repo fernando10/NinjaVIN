@@ -104,7 +104,7 @@ public:
      * latest optimized pose to the most current time.
      * @return
      */
-    bool GetLatestPose(sdtrack::TrackerPose *out_pose, bool integrate_imu=true);
+    bool GetLatestPose(sdtrack::TrackerPose *out_pose);
 
     const std::vector<std::shared_ptr<sdtrack::TrackerPose> >& GetOptimzedPoses();
 
@@ -173,6 +173,8 @@ private:
     bool do_bundle_adjustment = true;
     bool do_start_new_landmarks = true;
     bool use_system_time = false;
+    bool planar_motion = false;
+    bool integrate_imu = false;
 
     std::string cam_uri_str_;
     std::string imu_uri_str_;
